@@ -205,7 +205,6 @@ public class OsloCityBike {
 
 
 /*
-mvn compile exec:java -Dexec.mainClass=org.apache.beam.examples.MinimalWordCount -Dexec.args="--inputFile=pom.xml --output=counts" -Pdirect-runner
 export GOOGLE_APPLICATION_CREDENTIALS="/Users/rm/Documents/development/gcp/beam/word-count-beam/sykkeldata-creds.json"
 
 
