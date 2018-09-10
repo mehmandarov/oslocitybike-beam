@@ -23,7 +23,8 @@ First you will need to create and download a GCP [credentials file][1].
 export GOOGLE_APPLICATION_CREDENTIALS="/example/path/to/your/file/sykkeldata-creds.json"
 ```
 
-To run the code, use the following example. Make sure to update `--project`, `--stagingLocation`, `--output`, and `--tempLocation`.
+To run the code, use the following example. Make sure to update `--project`, `--stagingLocation`, `--output`, and `--tempLocation`. 
+You will also need to make sure that all the Google Storage buckets are in the same region (EU, US, etc.) .
 
 ```bash
 mvn -Pdataflow-runner compile exec:java \
