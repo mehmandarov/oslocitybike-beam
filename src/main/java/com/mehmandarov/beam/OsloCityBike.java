@@ -205,6 +205,7 @@ public class OsloCityBike {
 
 
 /*
+export JAVA_HOME=`/usr/libexec/java_home -v 1.8`
 export GOOGLE_APPLICATION_CREDENTIALS="/Users/rm/Documents/development/gcp/beam/word-count-beam/sykkeldata-creds.json"
 
 
