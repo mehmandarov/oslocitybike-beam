@@ -5,14 +5,14 @@ Beam project using public Oslo City Bike data
 
 ### Software Requirements
 
-* Java 9, or above
+* Java 8 (Java 9 or above are not yet officially supported by Beam)
 * Maven 3.5.x
 
 ### Running on your local machine
 ```bash
 mvn compile exec:java \
       -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
-      -Dexec.args="--inputFile=src/main/resources/bikedata-example.txt --output=bikedatalocal" \
+      -Dexec.args="--availabilityInputFile=src/main/resources/bikedata-availability-example.txt --output=bikedatalocal" \
       -Pdirect-runner
 ```
 
