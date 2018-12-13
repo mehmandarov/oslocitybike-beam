@@ -5,7 +5,7 @@ Beam project using public Oslo City Bike data
 
 ### Software Requirements
 
-* Java 8 (Java 9 or above are not yet officially supported by Beam)
+* Java 8 (Java 9 or above are [not officially supported][2] by Beam yet)
 * Maven 3.5.x
 
 ### Running on your local machine
@@ -39,3 +39,4 @@ mvn -Pdataflow-runner compile exec:java \
 
 
 [1]:https://cloud.google.com/dataflow/docs/quickstarts/quickstart-java-maven
+[2]:https://issues.apache.org/jira/browse/BEAM-2530
