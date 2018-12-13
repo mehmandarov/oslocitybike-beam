@@ -23,7 +23,7 @@ import java.util.Map;
 
 public class OsloCityBike {
 
-    static class ExtractFromJSON extends DoFn<String, LinkedHashMap> {
+    static class ExtractStationAvailabilityDataFromJSON extends DoFn<String, LinkedHashMap> {
 
         @ProcessElement
         public void processElement(@Element String jsonElement, OutputReceiver<LinkedHashMap> receiver) {
@@ -54,6 +54,38 @@ public class OsloCityBike {
         }
     }
 
+    static class ExtractStationMetaDataFromJSON extends DoFn<String, LinkedHashMap> {
+
+        @ProcessElement
+        public void processElement(@Element String jsonElement, OutputReceiver<LinkedHashMap> receiver) {
+
+            try {
+                ObjectMapper objectMapper = new ObjectMapper();
+                Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, Object>>() {});
+
+                for (Object o : map.get("stations")) {
+                    LinkedHashMap stationData = (LinkedHashMap) o;
+
+                    LinkedHashMap o2 = (LinkedHashMap) stationData.get("availability");
+                    stationData.put("availability_bikes", o2.get("bikes"));
+                    stationData.put("availability_locks", o2.get("locks"));
+                    stationData.put("availability_overflow_capacity", o2.get("overflow_capacity"));
+                    stationData.remove("availability");
+
+
+                    stationData.put("updated_at", map.get("updated_at"));
+                    System.out.println(stationData);
+
+                    receiver.output(stationData);
+                }
+
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+
     /** A SimpleFunction that converts station data into a printable string. */
     public static class FormatAsTextFn extends SimpleFunction<LinkedHashMap, String> {
         @Override
@@ -62,6 +94,7 @@ public class OsloCityBike {
         }
     }
 
+    /** A SimpleFunction that converts station data into an object that can be stored in BigQuery. */
     static class FormatStationAvailabilityDataFn extends SimpleFunction<LinkedHashMap, TableRow>{
 
         @Override
@@ -76,9 +109,7 @@ public class OsloCityBike {
             return row;
         }
 
-        /**
-         * Defines the BigQuery schema for Station Availability.
-         */
+        /** Defines the BigQuery schema for station availability. */
         static TableSchema getSchema() {
             List<TableFieldSchema> fields = new ArrayList<>();
             fields.add(new TableFieldSchema().setName("id").setType("INTEGER"));
@@ -92,7 +123,7 @@ public class OsloCityBike {
 
     /**
      * A PTransform that converts a PCollection containing lines of text into a PCollection of
-     * formatted word counts.
+     * LinkedHashMap with station availability data.
      */
     public static class StationData extends PTransform<PCollection<String>, PCollection<LinkedHashMap>> {
         @Override
@@ -100,14 +131,11 @@ public class OsloCityBike {
 
             // Convert lines of text into individual words.
             PCollection<LinkedHashMap> stations = elements.apply(
-                    ParDo.of(new ExtractFromJSON()));
+                    ParDo.of(new ExtractStationAvailabilityDataFromJSON()));
 
             return stations;
         }
     }
-
-
-
 
     /**
      * Options supported by {@link com.mehmandarov.beam.OsloCityBike}.
@@ -121,14 +149,27 @@ public class OsloCityBike {
     public interface OsloCityBikeOptions extends PipelineOptions {
 
         /**
-         * By default, this example reads from a public dataset containing the text of
-         * King Lear. Set this option to choose a different input file or glob.
+         * By default, the code reads from a public dataset containing a subset of
+         * availability data for city bikes. Set this option to choose a different input file or glob
+         * (i.e. partial names with *, like "*-availability.txt").
          */
-        @Description("Path of the file to read from")
-        @Default.String("gs://my_oslo_bike_data/*-availability.txt")
-        //@Default.String("sykkeldata.txt")
-        String getInputFile();
-        void setInputFile(String value);
+        @Description("Path of the file with the availability data")
+        //@Default.String("gs://my_oslo_bike_data/*-availability.txt")
+        @Default.String("bikedata-availability-example.txt")
+        String getAvailabilityInputFile();
+        void setAvailabilityInputFile(String value);
+
+        /**
+         * By default, the code reads from a public dataset containing a subset of
+         * bike station metadata for city bikes. Set this option to choose a different input file or glob
+         * (i.e. partial names with *, like "*-stations.txt").
+         */
+        @Description("Path of the file with the availability data")
+        //@Default.String("gs://my_oslo_bike_data/*-stations.txt")
+        @Default.String("bikedata-stations-example.txt")
+        String getStationMetadataInputFile();
+        void setStationMetadataInputFile(String value);
+
 
         /**
          * Set this required option to specify where to write the output.
@@ -168,31 +209,44 @@ public class OsloCityBike {
     }
 
     static void processOsloCityBikeData(OsloCityBikeOptions options) {
-        Pipeline p = Pipeline.create(options);
 
+        // Create a pipeline for availability data
+        Pipeline availabilityPipeline = Pipeline.create(options);
+
+        PCollection <LinkedHashMap> availabilityData = availabilityPipeline
+                .apply("ReadLines", TextIO.read().from(options.getAvailabilityInputFile()))
+                .apply(new StationData());
+
+        // Create a pipeline for station meta data
+        Pipeline metadataPipeline = Pipeline.create(options);
+
+
+        // Needed for BigQuery
         TableReference tableRef = new TableReference();
         tableRef.setDatasetId(options.getOutputDataset());
         tableRef.setProjectId(options.as(GcpOptions.class).getProject());
         tableRef.setTableId(options.getOutputTableName());
 
         if (options.getOutputFormat().equalsIgnoreCase("bq")) {
-            p.apply("ReadLines", TextIO.read().from(options.getInputFile()))
-                    .apply(new StationData())
-                    .apply(MapElements.via(new FormatStationAvailabilityDataFn()))
+            availabilityData.apply(MapElements.via(new FormatStationAvailabilityDataFn()))
                     .apply(BigQueryIO.writeTableRows().to(tableRef)
                             .withSchema(FormatStationAvailabilityDataFn.getSchema())
                             .withCreateDisposition(BigQueryIO.Write.CreateDisposition.CREATE_IF_NEEDED)
                             .withWriteDisposition(BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
                     );
         } else if (options.getOutputFormat().equalsIgnoreCase("files")) {
-            p.apply("ReadLines", TextIO.read().from(options.getInputFile()))
+            availabilityData.apply(MapElements.via(new FormatAsTextFn()))
+                    .apply("WriteStationData", TextIO.write().to(options.getOutput()));
+            /*
+            pipeline.apply("ReadLines", TextIO.read().from(options.getAvailabilityInputFile()))
                     .apply(new StationData())
                     .apply(MapElements.via(new FormatAsTextFn()))
                     .apply("WriteStationData", TextIO.write().to(options.getOutput()));
+            */
         }
 
 
-        p.run().waitUntilFinish();
+        availabilityPipeline.run().waitUntilFinish();
     }
 
     public static void main(String[] args) {
