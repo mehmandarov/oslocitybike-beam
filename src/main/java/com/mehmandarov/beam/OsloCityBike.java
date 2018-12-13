@@ -64,19 +64,11 @@ public class OsloCityBike {
                 Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, Object>>() {});
 
                 for (Object o : map.get("stations")) {
-                    LinkedHashMap stationData = (LinkedHashMap) o;
+                    LinkedHashMap stationMetaData = (LinkedHashMap) o;
 
-                    LinkedHashMap o2 = (LinkedHashMap) stationData.get("availability");
-                    stationData.put("availability_bikes", o2.get("bikes"));
-                    stationData.put("availability_locks", o2.get("locks"));
-                    stationData.put("availability_overflow_capacity", o2.get("overflow_capacity"));
-                    stationData.remove("availability");
+                    System.out.println(stationMetaData);
 
-
-                    stationData.put("updated_at", map.get("updated_at"));
-                    System.out.println(stationData);
-
-                    receiver.output(stationData);
+                    receiver.output(stationMetaData);
                 }
 
             } catch (IOException e) {
@@ -125,13 +117,29 @@ public class OsloCityBike {
      * A PTransform that converts a PCollection containing lines of text into a PCollection of
      * LinkedHashMap with station availability data.
      */
-    public static class StationData extends PTransform<PCollection<String>, PCollection<LinkedHashMap>> {
+    public static class StationAvailabilityData extends PTransform<PCollection<String>, PCollection<LinkedHashMap>> {
         @Override
         public PCollection<LinkedHashMap> expand(PCollection<String> elements) {
 
-            // Convert lines of text into individual words.
+            // Convert lines of text into LinkedHashMap.
             PCollection<LinkedHashMap> stations = elements.apply(
                     ParDo.of(new ExtractStationAvailabilityDataFromJSON()));
+
+            return stations;
+        }
+    }
+
+    /**
+     * A PTransform that converts a PCollection containing lines of text into a PCollection of
+     * LinkedHashMap with station availability data.
+     */
+    public static class StationMetadata extends PTransform<PCollection<String>, PCollection<LinkedHashMap>> {
+        @Override
+        public PCollection<LinkedHashMap> expand(PCollection<String> elements) {
+
+            // Convert lines of text into LinkedHashMap.
+            PCollection<LinkedHashMap> stations = elements.apply(
+                    ParDo.of(new ExtractStationMetaDataFromJSON()));
 
             return stations;
         }
@@ -155,7 +163,7 @@ public class OsloCityBike {
          */
         @Description("Path of the file with the availability data")
         //@Default.String("gs://my_oslo_bike_data/*-availability.txt")
-        @Default.String("bikedata-availability-example.txt")
+        @Default.String("src/main/resources/bikedata-availability-example.txt")
         String getAvailabilityInputFile();
         void setAvailabilityInputFile(String value);
 
@@ -166,28 +174,36 @@ public class OsloCityBike {
          */
         @Description("Path of the file with the availability data")
         //@Default.String("gs://my_oslo_bike_data/*-stations.txt")
-        @Default.String("bikedata-stations-example.txt")
+        @Default.String("src/main/resources/bikedata-stations-example.txt")
         String getStationMetadataInputFile();
         void setStationMetadataInputFile(String value);
 
+        /**
+         * Option to specify whether the pipeline writes files og BigQuery.
+         */
+        @Description("Output format for the processed data: [files|bq] ")
+        @Default.String("files")
+        @Validation.Required
+        String getOutputFormat();
+        void setOutputFormat(String value);
 
         /**
          * Set this required option to specify where to write the output.
          */
         @Description("Path of the file to write to")
-        @Default.String("citybikes")
+        @Default.String("citybikes-stations-availability")
         @Validation.Required
-        String getOutput();
-        void setOutput(String value);
+        String getStationOutput();
+        void setStationOutput(String value);
 
         /**
          * Set this required option to specify where to write the output.
          */
-        @Description("Data set name")
-        @Default.String("OsloCityBike")
+        @Description("Path of the file to write to")
+        @Default.String("citybikes-stations-metadata")
         @Validation.Required
-        String getOutputDataset();
-        void setOutputDataset(String value);
+        String getMetadataOutput();
+        void setMetadataOutput(String value);
 
         /**
          * Set this required option to specify where to write the output.
@@ -199,35 +215,41 @@ public class OsloCityBike {
         void setOutputTableName(String value);
 
         /**
-         * Option to specify whether the pipeline writes files og BigQuery.
+         * Set this required option to specify where to write the output.
          */
-        @Description("Output format for the processed data: [files|bq] ")
-        @Default.String("files")
+        @Description("Data set name")
+        @Default.String("OsloCityBike")
         @Validation.Required
-        String getOutputFormat();
-        void setOutputFormat(String value);
+        String getOutputDataset();
+        void setOutputDataset(String value);
+
     }
 
     static void processOsloCityBikeData(OsloCityBikeOptions options) {
+
+        // Create a pipeline for station meta data
+        Pipeline metadataPipeline = Pipeline.create(options);
+
+        PCollection <LinkedHashMap> stationMetadata = metadataPipeline
+                .apply("ReadLines", TextIO.read().from(options.getStationMetadataInputFile()))
+                .apply(new StationMetadata());
+
 
         // Create a pipeline for availability data
         Pipeline availabilityPipeline = Pipeline.create(options);
 
         PCollection <LinkedHashMap> availabilityData = availabilityPipeline
                 .apply("ReadLines", TextIO.read().from(options.getAvailabilityInputFile()))
-                .apply(new StationData());
+                .apply(new StationAvailabilityData());
 
-        // Create a pipeline for station meta data
-        Pipeline metadataPipeline = Pipeline.create(options);
-
-
-        // Needed for BigQuery
-        TableReference tableRef = new TableReference();
-        tableRef.setDatasetId(options.getOutputDataset());
-        tableRef.setProjectId(options.as(GcpOptions.class).getProject());
-        tableRef.setTableId(options.getOutputTableName());
 
         if (options.getOutputFormat().equalsIgnoreCase("bq")) {
+            // Needed for BigQuery
+            TableReference tableRef = new TableReference();
+            tableRef.setDatasetId(options.getOutputDataset());
+            tableRef.setProjectId(options.as(GcpOptions.class).getProject());
+            tableRef.setTableId(options.getOutputTableName());
+
             availabilityData.apply(MapElements.via(new FormatStationAvailabilityDataFn()))
                     .apply(BigQueryIO.writeTableRows().to(tableRef)
                             .withSchema(FormatStationAvailabilityDataFn.getSchema())
@@ -236,17 +258,15 @@ public class OsloCityBike {
                     );
         } else if (options.getOutputFormat().equalsIgnoreCase("files")) {
             availabilityData.apply(MapElements.via(new FormatAsTextFn()))
-                    .apply("WriteStationData", TextIO.write().to(options.getOutput()));
-            /*
-            pipeline.apply("ReadLines", TextIO.read().from(options.getAvailabilityInputFile()))
-                    .apply(new StationData())
-                    .apply(MapElements.via(new FormatAsTextFn()))
-                    .apply("WriteStationData", TextIO.write().to(options.getOutput()));
-            */
+                    .apply("WriteStationData", TextIO.write().to(options.getStationOutput()));
+
+            stationMetadata.apply(MapElements.via(new FormatAsTextFn()))
+                    .apply("WriteStationMetaData", TextIO.write().to(options.getMetadataOutput()));
         }
 
-
+        metadataPipeline.run().waitUntilFinish();
         availabilityPipeline.run().waitUntilFinish();
+
     }
 
     public static void main(String[] args) {
