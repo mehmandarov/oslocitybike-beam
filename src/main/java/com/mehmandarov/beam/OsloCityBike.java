@@ -12,7 +12,13 @@ import org.apache.beam.sdk.io.TextIO;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO;
 import org.apache.beam.sdk.options.*;
 import org.apache.beam.sdk.transforms.*;
+import org.apache.beam.sdk.transforms.join.CoGbkResult;
+import org.apache.beam.sdk.transforms.join.CoGroupByKey;
+import org.apache.beam.sdk.transforms.join.KeyedPCollectionTuple;
+import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PCollection;
+import org.apache.beam.sdk.values.TupleTag;
+import sun.awt.image.ImageWatched;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -23,29 +29,25 @@ import java.util.Map;
 
 public class OsloCityBike {
 
-    static class ExtractStationAvailabilityDataFromJSON extends DoFn<String, LinkedHashMap> {
+    static class ExtractStationAvailabilityDataFromJSON extends DoFn<String, KV<Integer, LinkedHashMap>> {
 
         @ProcessElement
-        public void processElement(@Element String jsonElement, OutputReceiver<LinkedHashMap> receiver) {
+        public void processElement(@Element String jsonElement, OutputReceiver<KV<Integer, LinkedHashMap>> receiver) {
 
             try {
                 ObjectMapper objectMapper = new ObjectMapper();
                 Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, Object>>() {});
 
                 for (Object o : map.get("stations")) {
-                    LinkedHashMap stationData = (LinkedHashMap) o;
+                    LinkedHashMap stationDataItem = (LinkedHashMap) o;
 
-                    LinkedHashMap o2 = (LinkedHashMap) stationData.get("availability");
-                    stationData.put("availability_bikes", o2.get("bikes"));
-                    stationData.put("availability_locks", o2.get("locks"));
-                    stationData.put("availability_overflow_capacity", o2.get("overflow_capacity"));
-                    stationData.remove("availability");
+                    stationDataItem.put("availability_bikes", ((LinkedHashMap) stationDataItem.get("availability")).get("bikes"));
+                    stationDataItem.put("availability_locks", ((LinkedHashMap) stationDataItem.get("availability")).get("locks"));
+                    stationDataItem.put("availability_overflow_capacity", stationDataItem.get("overflow_capacity"));
+                    stationDataItem.remove("availability");
+                    stationDataItem.put("updated_at", map.get("updated_at"));
 
-
-                    stationData.put("updated_at", map.get("updated_at"));
-                    System.out.println(stationData);
-
-                    receiver.output(stationData);
+                    receiver.output(KV.of((Integer)stationDataItem.get("id"), stationDataItem));
                 }
 
             } catch (IOException e) {
@@ -54,21 +56,25 @@ public class OsloCityBike {
         }
     }
 
-    static class ExtractStationMetaDataFromJSON extends DoFn<String, LinkedHashMap> {
+    static class ExtractStationMetaDataFromJSON extends DoFn<String, KV<Integer, LinkedHashMap>> {
 
         @ProcessElement
-        public void processElement(@Element String jsonElement, OutputReceiver<LinkedHashMap> receiver) {
+        public void processElement(@Element String jsonElement, OutputReceiver<KV<Integer, LinkedHashMap>> receiver) {
 
             try {
                 ObjectMapper objectMapper = new ObjectMapper();
                 Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, Object>>() {});
 
                 for (Object o : map.get("stations")) {
-                    LinkedHashMap stationMetaData = (LinkedHashMap) o;
+                    LinkedHashMap stationMetaDataItem = (LinkedHashMap) o;
 
-                    System.out.println(stationMetaData);
+                    // simplify the metadata object a bit
+                    stationMetaDataItem.put("station_center_lat", ((LinkedHashMap) stationMetaDataItem.get("center")).get("latitude"));
+                    stationMetaDataItem.put("station_center_lon", ((LinkedHashMap) stationMetaDataItem.get("center")).get("longitude"));
+                    stationMetaDataItem.remove("center");
+                    stationMetaDataItem.remove("bounds");
 
-                    receiver.output(stationMetaData);
+                    receiver.output(KV.of((Integer)stationMetaDataItem.get("id"), stationMetaDataItem));
                 }
 
             } catch (IOException e) {
@@ -76,28 +82,35 @@ public class OsloCityBike {
             }
         }
     }
-
 
     /** A SimpleFunction that converts station data into a printable string. */
-    public static class FormatAsTextFn extends SimpleFunction<LinkedHashMap, String> {
+    public static class FormatAnytihngAsTextFn extends SimpleFunction<Object, String> {
         @Override
-        public String apply(LinkedHashMap input) {
+        public String apply(Object input) {
+            return input.toString();
+        }
+    }
+
+    /** A SimpleFunction that converts station data into a printable string. */
+    public static class FormatAsTextFn extends SimpleFunction<KV<Integer, LinkedHashMap>, String> {
+        @Override
+        public String apply(KV<Integer, LinkedHashMap> input) {
             return input.toString();
         }
     }
 
     /** A SimpleFunction that converts station data into an object that can be stored in BigQuery. */
-    static class FormatStationAvailabilityDataFn extends SimpleFunction<LinkedHashMap, TableRow>{
+    static class FormatStationAvailabilityDataFn extends SimpleFunction<KV<Integer, LinkedHashMap>, TableRow>{
 
         @Override
-        public TableRow apply(LinkedHashMap stationAvailability) {
+        public TableRow apply(KV<Integer, LinkedHashMap> stationAvailability) {
 
             TableRow row = new TableRow()
-                    .set("id", stationAvailability.get("id"))
-                    .set("availability_bikes", stationAvailability.get("availability_bikes"))
-                    .set("availability_locks", stationAvailability.get("availability_locks"))
-                    .set("availability_overflow_capacity", stationAvailability.get("availability_overflow_capacity"))
-                    .set("updated_at", stationAvailability.get("updated_at"));
+                    .set("id", stationAvailability.getValue().get("id"))
+                    .set("availability_bikes", stationAvailability.getValue().get("availability_bikes"))
+                    .set("availability_locks", stationAvailability.getValue().get("availability_locks"))
+                    .set("availability_overflow_capacity", stationAvailability.getValue().get("availability_overflow_capacity"))
+                    .set("updated_at", stationAvailability.getValue().get("updated_at"));
             return row;
         }
 
@@ -117,12 +130,12 @@ public class OsloCityBike {
      * A PTransform that converts a PCollection containing lines of text into a PCollection of
      * LinkedHashMap with station availability data.
      */
-    public static class StationAvailabilityData extends PTransform<PCollection<String>, PCollection<LinkedHashMap>> {
+    public static class StationAvailabilityData extends PTransform<PCollection<String>, PCollection<KV<Integer, LinkedHashMap>>> {
         @Override
-        public PCollection<LinkedHashMap> expand(PCollection<String> elements) {
+        public PCollection<KV<Integer, LinkedHashMap>> expand(PCollection<String> elements) {
 
             // Convert lines of text into LinkedHashMap.
-            PCollection<LinkedHashMap> stations = elements.apply(
+            PCollection<KV<Integer, LinkedHashMap>> stations = elements.apply(
                     ParDo.of(new ExtractStationAvailabilityDataFromJSON()));
 
             return stations;
@@ -133,12 +146,12 @@ public class OsloCityBike {
      * A PTransform that converts a PCollection containing lines of text into a PCollection of
      * LinkedHashMap with station availability data.
      */
-    public static class StationMetadata extends PTransform<PCollection<String>, PCollection<LinkedHashMap>> {
+    public static class StationMetadata extends PTransform<PCollection<String>, PCollection<KV<Integer, LinkedHashMap>>> {
         @Override
-        public PCollection<LinkedHashMap> expand(PCollection<String> elements) {
+        public PCollection<KV<Integer, LinkedHashMap>> expand(PCollection<String> elements) {
 
             // Convert lines of text into LinkedHashMap.
-            PCollection<LinkedHashMap> stations = elements.apply(
+            PCollection<KV<Integer, LinkedHashMap>> stations = elements.apply(
                     ParDo.of(new ExtractStationMetaDataFromJSON()));
 
             return stations;
@@ -228,19 +241,28 @@ public class OsloCityBike {
     static void processOsloCityBikeData(OsloCityBikeOptions options) {
 
         // Create a pipeline for station meta data
-        Pipeline metadataPipeline = Pipeline.create(options);
+        Pipeline pipeline = Pipeline.create(options);
 
-        PCollection <LinkedHashMap> stationMetadata = metadataPipeline
+        PCollection <KV<Integer, LinkedHashMap>> stationMetadata = pipeline
                 .apply("ReadLines", TextIO.read().from(options.getStationMetadataInputFile()))
                 .apply(new StationMetadata());
 
 
         // Create a pipeline for availability data
-        Pipeline availabilityPipeline = Pipeline.create(options);
+        //Pipeline availabilityPipeline = Pipeline.create(options);
 
-        PCollection <LinkedHashMap> availabilityData = availabilityPipeline
+        PCollection <KV<Integer, LinkedHashMap>> availabilityData = pipeline
                 .apply("ReadLines", TextIO.read().from(options.getAvailabilityInputFile()))
                 .apply(new StationAvailabilityData());
+
+
+        final TupleTag<LinkedHashMap> metadataIdTag = new TupleTag<LinkedHashMap>();
+        final TupleTag<LinkedHashMap> availabilityIdTag = new TupleTag<LinkedHashMap>();
+
+        // Merge collection values into a CoGbkResult collection.
+        PCollection<KV<Integer, CoGbkResult>> joinedCollection = KeyedPCollectionTuple.of(metadataIdTag, stationMetadata)
+                                                                    .and(availabilityIdTag, availabilityData)
+                                                                    .apply(CoGroupByKey.<Integer>create());
 
 
         if (options.getOutputFormat().equalsIgnoreCase("bq")) {
@@ -262,10 +284,12 @@ public class OsloCityBike {
 
             stationMetadata.apply(MapElements.via(new FormatAsTextFn()))
                     .apply("WriteStationMetaData", TextIO.write().to(options.getMetadataOutput()));
+
+            joinedCollection.apply(MapElements.via(new FormatAnytihngAsTextFn()))
+                    .apply("WriteJoinedData", TextIO.write().to("tmp-JOINED-data.txt"));
         }
 
-        metadataPipeline.run().waitUntilFinish();
-        availabilityPipeline.run().waitUntilFinish();
+        pipeline.run().waitUntilFinish();
 
     }
 
