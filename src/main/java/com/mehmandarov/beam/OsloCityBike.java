@@ -260,7 +260,6 @@ public class OsloCityBike {
     }
 
     static void processOsloCityBikeData(OsloCityBikeOptions options) {
-
         // Create a pipeline for station meta data
         Pipeline pipeline = Pipeline.create(options);
 
@@ -268,14 +267,9 @@ public class OsloCityBike {
                 .apply("ReadLines", TextIO.read().from(options.getStationMetadataInputFile()))
                 .apply(new StationMetadata());
 
-
-        // Create a pipeline for availability data
-        //Pipeline availabilityPipeline = Pipeline.create(options);
-
         PCollection <KV<Integer, LinkedHashMap>> availabilityData = pipeline
                 .apply("ReadLines", TextIO.read().from(options.getAvailabilityInputFile()))
                 .apply(new StationAvailabilityData());
-
 
         final TupleTag<LinkedHashMap> metadataIdTag = new TupleTag<LinkedHashMap>(){};
         final TupleTag<LinkedHashMap> availabilityIdTag = new TupleTag<LinkedHashMap>(){};
