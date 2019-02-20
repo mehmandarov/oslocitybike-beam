@@ -18,6 +18,8 @@ import org.apache.beam.sdk.transforms.join.KeyedPCollectionTuple;
 import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.TupleTag;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -51,11 +53,15 @@ public class OsloCityBike {
 
             } catch (IOException e) {
                 e.printStackTrace();
+            } catch (NullPointerException e) {
+                e.printStackTrace();
             }
         }
     }
 
     static class ExtractStationMetaDataFromJSON extends DoFn<String, KV<Integer, LinkedHashMap>> {
+
+        private static final Logger log = LoggerFactory.getLogger(OsloCityBike.class);
 
         @ProcessElement
         public void processElement(@Element String jsonElement, OutputReceiver<KV<Integer, LinkedHashMap>> receiver) {
@@ -64,26 +70,26 @@ public class OsloCityBike {
                 ObjectMapper objectMapper = new ObjectMapper();
                 Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, Object>>() {});
 
-                for (Object o : map.get("stations")) {
-                    LinkedHashMap stationMetaDataItem = (LinkedHashMap) o;
+                for (Object o : map.get("stations"))
+                    if (o != null) {
+                        LinkedHashMap stationMetaDataItem = (LinkedHashMap) o;
 
-                    // simplify the metadata object a bit
-                    stationMetaDataItem.put("station_center_lat", ((LinkedHashMap) stationMetaDataItem.get("center")).get("latitude"));
-                    stationMetaDataItem.put("station_center_lon", ((LinkedHashMap) stationMetaDataItem.get("center")).get("longitude"));
-                    stationMetaDataItem.remove("center");
-                    stationMetaDataItem.remove("bounds");
+                        // simplify the metadata object a bit
+                        stationMetaDataItem.put("station_center_lat", ((LinkedHashMap) stationMetaDataItem.get("center")).get("latitude"));
+                        stationMetaDataItem.put("station_center_lon", ((LinkedHashMap) stationMetaDataItem.get("center")).get("longitude"));
+                        stationMetaDataItem.remove("center");
+                        stationMetaDataItem.remove("bounds");
 
-                    receiver.output(KV.of((Integer)stationMetaDataItem.get("id"), stationMetaDataItem));
-                }
-
+                        receiver.output(KV.of((Integer) stationMetaDataItem.get("id"), stationMetaDataItem));
+                    }
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
     }
 
-    /** A SimpleFunction that converts station data into a printable string. */
-    public static class FormatAnytihngAsTextFn extends SimpleFunction<Object, String> {
+    /** A SimpleFunction that attempts to convert any objects into a printable string. */
+    public static class FormatAnythingAsTextFn extends SimpleFunction<Object, String> {
         @Override
         public String apply(Object input) {
             return input.toString();
@@ -91,38 +97,37 @@ public class OsloCityBike {
     }
 
     /** A SimpleFunction that converts station data into a printable string. */
-    public static class FormatAsTextFn extends SimpleFunction<KV<Integer, LinkedHashMap>, String> {
+    public static class FormatAsTextFn extends SimpleFunction<LinkedHashMap, String> {
         @Override
-        public String apply(KV<Integer, LinkedHashMap> input) {
+        public String apply(LinkedHashMap input) {
             return input.toString();
         }
     }
 
     /** A SimpleFunction that converts station data into an object that can be stored in BigQuery. */
-    static class FormatMergedStationDataToBigQueryFn extends SimpleFunction<KV<Integer, LinkedHashMap>, TableRow>{
+    static class FormatMergedStationDataToBigQueryFn extends SimpleFunction<LinkedHashMap, TableRow>{
 
         @Override
-        public TableRow apply(KV<Integer, LinkedHashMap> stationAvailability) {
-
+        public TableRow apply(LinkedHashMap mergedStationData) {
             TableRow row = new TableRow()
-                    .set("id", stationAvailability.getValue().get("id"))
-                    .set("in_service", stationAvailability.getValue().get("in_service"))
-                    .set("title", stationAvailability.getValue().get("title"))
-                    .set("subtitle", stationAvailability.getValue().get("subtitle"))
-                    .set("number_of_locks", stationAvailability.getValue().get("number_of_locks"))
-                    .set("station_center_lat", stationAvailability.getValue().get("station_center_lat"))
-                    .set("station_center_lon", stationAvailability.getValue().get("station_center_lon"))
-                    .set("availability_bikes", stationAvailability.getValue().get("availability_bikes"))
-                    .set("availability_locks", stationAvailability.getValue().get("availability_locks"))
-                    .set("availability_overflow_capacity", stationAvailability.getValue().get("availability_overflow_capacity"))
-                    .set("updated_at", stationAvailability.getValue().get("updated_at"));
+                    .set("id", mergedStationData.get("id"))
+                    .set("in_service", mergedStationData.get("in_service"))
+                    .set("title", mergedStationData.get("title"))
+                    .set("subtitle", mergedStationData.get("subtitle"))
+                    .set("number_of_locks", mergedStationData.get("number_of_locks"))
+                    .set("station_center_lat", mergedStationData.get("station_center_lat"))
+                    .set("station_center_lon", mergedStationData.get("station_center_lon"))
+                    .set("availability_bikes", mergedStationData.get("availability_bikes"))
+                    .set("availability_locks", mergedStationData.get("availability_locks"))
+                    .set("availability_overflow_capacity", mergedStationData.get("availability_overflow_capacity"))
+                    .set("updated_at", mergedStationData.get("updated_at"));
             return row;
         }
 
         /** Defines the BigQuery schema for station availability. */
         static TableSchema getSchema() {
             List<TableFieldSchema> fields = new ArrayList<>();
-            fields.add(new TableFieldSchema().setName("id").setType("INTEGER"));
+            fields.add(new TableFieldSchema().setName("id").setType("INTEGER").setMode("REQUIRED"));
             fields.add(new TableFieldSchema().setName("in_service").setType("BOOL"));
             fields.add(new TableFieldSchema().setName("title").setType("STRING"));
             fields.add(new TableFieldSchema().setName("subtitle").setType("STRING"));
@@ -132,7 +137,7 @@ public class OsloCityBike {
             fields.add(new TableFieldSchema().setName("availability_bikes").setType("INTEGER"));
             fields.add(new TableFieldSchema().setName("availability_locks").setType("INTEGER"));
             fields.add(new TableFieldSchema().setName("availability_overflow_capacity").setType("BOOL"));
-            fields.add(new TableFieldSchema().setName("updated_at").setType("TIMESTAMP"));
+            fields.add(new TableFieldSchema().setName("updated_at").setType("TIMESTAMP").setMode("REQUIRED"));
             return new TableSchema().setFields(fields);
         }
     }
@@ -187,7 +192,8 @@ public class OsloCityBike {
          */
         @Description("Path of the file with the availability data")
         //@Default.String("gs://my_oslo_bike_data/*-availability.txt")
-        @Default.String("src/main/resources/bikedata-availability-example.txt")
+        //@Default.String("src/main/resources/bikedata-availability-example.txt")
+        @Default.String("src/main/resources/2018-07-30-data/2018-07-30-12*-availability.txt")
         String getAvailabilityInputFile();
         void setAvailabilityInputFile(String value);
 
@@ -198,7 +204,8 @@ public class OsloCityBike {
          */
         @Description("Path of the file with the availability data")
         //@Default.String("gs://my_oslo_bike_data/*-stations.txt")
-        @Default.String("src/main/resources/bikedata-stations-example.txt")
+        //@Default.String("src/main/resources/bikedata-stations-example.txt")
+        @Default.String("src/main/resources/2018-07-30-data/2018-07-30-12*-stations.txt")
         String getStationMetadataInputFile();
         void setStationMetadataInputFile(String value);
 
@@ -257,6 +264,14 @@ public class OsloCityBike {
         String getOutputDataset();
         void setOutputDataset(String value);
 
+        /**
+         * Set this required option to specify table name for joined station metadata and availability data in BigQuery.
+         */
+        @Description("Output bucket when running a DataFlow job on GCP")
+        @Default.String("gs://my_oslo_bike_data/testing/output")
+        @Validation.Required
+        String getOutput();
+        void setOutput(String value);
     }
 
     static void processOsloCityBikeData(OsloCityBikeOptions options) {
@@ -264,11 +279,11 @@ public class OsloCityBike {
         Pipeline pipeline = Pipeline.create(options);
 
         PCollection <KV<Integer, LinkedHashMap>> stationMetadata = pipeline
-                .apply("ReadLines", TextIO.read().from(options.getStationMetadataInputFile()))
+                .apply("ReadLines: StationMetadataInputFiles", TextIO.read().from(options.getStationMetadataInputFile()))
                 .apply(new StationMetadata());
 
         PCollection <KV<Integer, LinkedHashMap>> availabilityData = pipeline
-                .apply("ReadLines", TextIO.read().from(options.getAvailabilityInputFile()))
+                .apply("ReadLines: AvailabilityInputFiles", TextIO.read().from(options.getAvailabilityInputFile()))
                 .apply(new StationAvailabilityData());
 
         final TupleTag<LinkedHashMap> metadataIdTag = new TupleTag<LinkedHashMap>(){};
@@ -286,18 +301,20 @@ public class OsloCityBike {
                         new  DoFn<KV<Integer, CoGbkResult>, LinkedHashMap>() {
                             @ProcessElement
                             public void processElement(ProcessContext c) {
-                                LinkedHashMap<String, String> mergedMap = initMap();
                                 KV<Integer, CoGbkResult> e = c.element();
 
-                                // Return an empty map if no elements with this tag
-                                LinkedHashMap pt1Val = e.getValue().getOnly(availabilityIdTag,
-                                                                            new LinkedHashMap<String, String>());
-                                LinkedHashMap pt2Val = e.getValue().getOnly(metadataIdTag,
-                                                                            new LinkedHashMap<String, String>());
+                                Iterable<LinkedHashMap> pt1Vals = e.getValue().getAll(availabilityIdTag);
+                                for (LinkedHashMap pt1Val : pt1Vals) {
+                                    LinkedHashMap<String, String> mergedMap = initMap();
 
-                                mergedMap.putAll(pt1Val);
-                                mergedMap.putAll(pt2Val);
-                                c.output(mergedMap);
+                                    LinkedHashMap pt2Val = new LinkedHashMap<String, String>();
+                                    if ((e.getValue().getAll(metadataIdTag)).iterator().hasNext()) {
+                                        pt2Val = (e.getValue().getAll(metadataIdTag)).iterator().next();
+                                    }
+                                    mergedMap.putAll(pt1Val);
+                                    mergedMap.putAll(pt2Val);
+                                    c.output(mergedMap);
+                                }
                             }
 
                             // Should be replaced with a proper object.
@@ -327,23 +344,23 @@ public class OsloCityBike {
             tableRef.setProjectId(options.as(GcpOptions.class).getProject());
             tableRef.setTableId(options.getOutputTableName());
 
-            availabilityData.apply(MapElements.via(new FormatMergedStationDataToBigQueryFn()))
-                    .apply(BigQueryIO.writeTableRows().to(tableRef)
+            finalResultCollection.apply(MapElements.via(new FormatMergedStationDataToBigQueryFn()))
+                    .apply("WriteJoinedData to BigQuery", BigQueryIO.writeTableRows().to(tableRef)
                             .withSchema(FormatMergedStationDataToBigQueryFn.getSchema())
                             .withCreateDisposition(BigQueryIO.Write.CreateDisposition.CREATE_IF_NEEDED)
                             .withWriteDisposition(BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
                     );
         } else if (options.getOutputFormat().equalsIgnoreCase("files")) {
-            //availabilityData.apply(MapElements.via(new FormatAsTextFn()))
-            //        .apply("WriteStationData", TextIO.write().to(options.getStationOutput()));
+            //availabilityData.apply(MapElements.via(new FormatAnythingAsTextFn()))
+            //        .apply("WriteStationData", TextIO.write().to(options.getJoinedMetadataAndAvailabilityOutput()));
 
-            //stationMetadata.apply(MapElements.via(new FormatAsTextFn()))
+            //stationMetadata.apply(MapElements.via(new FormatAnythingAsTextFn()))
             //        .apply("WriteStationMetaData", TextIO.write().to(options.getMetadataOutput()));
 
-            //joinedCollection.apply(MapElements.via(new FormatAnytihngAsTextFn()))
+            //joinedCollection.apply(MapElements.via(new FormatAnythingAsTextFn()))
             //        .apply("WriteJoinedData", TextIO.write().to("tmp-JOINED-data.txt"));
 
-            finalResultCollection.apply(MapElements.via(new FormatAnytihngAsTextFn()))
+            finalResultCollection.apply(MapElements.via(new FormatAsTextFn()))
                     .apply("WriteJoinedData", TextIO.write().to(options.getJoinedMetadataAndAvailabilityOutput()));
         }
 
@@ -369,9 +386,29 @@ mvn -Pdataflow-runner compile exec:java \
       -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
       -Dexec.args="--project=rm-cx-211107 \
       --stagingLocation=gs://my_oslo_bike_data/testing/ \
-      --output=gs://my_oslo_bike_data/testing/output \
       --tempLocation=gs://my_oslo_bike_data/testing/ \
+      --output=gs://my_oslo_bike_data/testing/output \
+      --outputFormat=bq \
+      --availabilityInputFile=gs://my_oslo_bike_data/*-stations.txt \
+      --stationMetadataInputFile=gs://my_oslo_bike_data/*-availability.txt \
       --runner=DataflowRunner \
       --region=europe-west1"
 
+
+mvn -Pdataflow-runner compile exec:java \
+      -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
+      -Dexec.args="--project=rm-cx-211107 \
+      --stagingLocation=gs://my_oslo_bike_data/testing/ \
+      --tempLocation=gs://my_oslo_bike_data/testing/ \
+      --output=gs://my_oslo_bike_data/testing/output \
+      --outputFormat=bq \
+      --availabilityInputFile=gs://my_oslo_bike_data/2018-07-30-*-stations.txt \
+      --stationMetadataInputFile=gs://my_oslo_bike_data/2018-07-30-*-availability.txt \
+      --runner=DataflowRunner \
+      --region=europe-west1"
+
+
+mvn compile exec:java \
+      -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
+      -Pdirect-runner
 */
