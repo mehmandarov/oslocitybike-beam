@@ -75,8 +75,12 @@ public class OsloCityBike {
                         LinkedHashMap stationMetaDataItem = (LinkedHashMap) o;
 
                         // simplify the metadata object a bit
-                        stationMetaDataItem.put("station_center_lat", ((LinkedHashMap) stationMetaDataItem.get("center")).get("latitude"));
-                        stationMetaDataItem.put("station_center_lon", ((LinkedHashMap) stationMetaDataItem.get("center")).get("longitude"));
+                        stationMetaDataItem.put("station_center_lat",
+                                ((LinkedHashMap) stationMetaDataItem.getOrDefault("center",
+                                        new LinkedHashMap<String, LinkedHashMap>())).getOrDefault("latitude", ""));
+                        stationMetaDataItem.put("station_center_lon",
+                                ((LinkedHashMap) stationMetaDataItem.getOrDefault("center",
+                                        new LinkedHashMap<String, LinkedHashMap>())).getOrDefault("longitude", ""));
                         stationMetaDataItem.remove("center");
                         stationMetaDataItem.remove("bounds");
 
@@ -351,11 +355,18 @@ public class OsloCityBike {
                             .withWriteDisposition(BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
                     );
         } else if (options.getOutputFormat().equalsIgnoreCase("files")) {
+
             //availabilityData.apply(MapElements.via(new FormatAnythingAsTextFn()))
-            //        .apply("WriteStationData", TextIO.write().to(options.getJoinedMetadataAndAvailabilityOutput()));
+            //        .apply("WriteStationData", TextIO.write().to(options.getMetadataOutput()));
+            // RETURNS:
+            // KV{166, {id=166, availability_bikes=6, availability_locks=12, availability_overflow_capacity=false, updated_at=2018-08-01T14:35:01+00:00}}
+            // ---
 
             //stationMetadata.apply(MapElements.via(new FormatAnythingAsTextFn()))
             //        .apply("WriteStationMetaData", TextIO.write().to(options.getMetadataOutput()));
+            // RETURNS:
+            // KV{157, {id=157, in_service=true, title=Nylandsveien, subtitle=mellom Norbygata og Urtegata, number_of_locks=30, station_center_lat=59.91562, station_center_lon=10.762248}}
+            // ---
 
             //joinedCollection.apply(MapElements.via(new FormatAnythingAsTextFn()))
             //        .apply("WriteJoinedData", TextIO.write().to("tmp-JOINED-data.txt"));
@@ -379,7 +390,7 @@ public class OsloCityBike {
 
 /*
 export JAVA_HOME=`/usr/libexec/java_home -v 1.8`
-export GOOGLE_APPLICATION_CREDENTIALS="/Users/rm/Documents/development/gcp/beam/word-count-beam/sykkeldata-creds.json"
+export GOOGLE_APPLICATION_CREDENTIALS="/Users/rm/Documents/development/gcp/beam/oslocitybike-beam/sykkeldata-creds.json"
 
 
 mvn -Pdataflow-runner compile exec:java \
@@ -402,8 +413,8 @@ mvn -Pdataflow-runner compile exec:java \
       --tempLocation=gs://my_oslo_bike_data/testing/ \
       --output=gs://my_oslo_bike_data/testing/output \
       --outputFormat=bq \
-      --availabilityInputFile=gs://my_oslo_bike_data/2018-07-30-*-stations.txt \
-      --stationMetadataInputFile=gs://my_oslo_bike_data/2018-07-30-*-availability.txt \
+      --availabilityInputFile=src/main/resources/2018-08-data/2018-08-01-*-stations.txt \
+      --stationMetadataInputFile=src/main/resources/2018-08-data/2018-08-01-*-availability.txt \
       --runner=DataflowRunner \
       --region=europe-west1"
 
@@ -411,4 +422,24 @@ mvn -Pdataflow-runner compile exec:java \
 mvn compile exec:java \
       -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
       -Pdirect-runner
-*/
+      --availabilityInputFile=gs://my_oslo_bike_data/*-stations.txt \
+      --stationMetadataInputFile=gs://my_oslo_bike_data/*-availability.txt \
+
+
+mvn compile exec:java \
+      -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
+      -Dexec.args=" \
+        --availabilityInputFile=src/main/resources/2018-08-data/2018-08-01-*-availability.txt
+        --stationMetadataInputFile=src/main/resources/2018-08-data/2018-08-01-*-stations.txt
+      " \
+
+      -Pdirect-runner
+
+
+mvn compile exec:java \
+      -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
+      -Dexec.args="--availabilityInputFile=src/main/resources/bikedata-availability-example.txt --output=bikedatalocal" \
+      -Pdirect-runner
+
+ */
+
