@@ -32,9 +32,10 @@ public class OsloCityBike {
 
     static class ExtractStationAvailabilityDataFromJSON extends DoFn<String, KV<Integer, LinkedHashMap>> {
 
+        private static final Logger log = LoggerFactory.getLogger(ExtractStationAvailabilityDataFromJSON.class);
+
         @ProcessElement
         public void processElement(@Element String jsonElement, OutputReceiver<KV<Integer, LinkedHashMap>> receiver) {
-
             try {
                 ObjectMapper objectMapper = new ObjectMapper();
                 Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, Object>>() {});
@@ -42,9 +43,12 @@ public class OsloCityBike {
                 for (Object o : map.get("stations")) {
                     LinkedHashMap stationDataItem = (LinkedHashMap) o;
 
-                    stationDataItem.put("availability_bikes", ((LinkedHashMap) stationDataItem.get("availability")).get("bikes"));
-                    stationDataItem.put("availability_locks", ((LinkedHashMap) stationDataItem.get("availability")).get("locks"));
-                    stationDataItem.put("availability_overflow_capacity", ((LinkedHashMap) stationDataItem.get("availability")).get("overflow_capacity"));
+                    stationDataItem.put("availability_bikes", ((LinkedHashMap) stationDataItem.getOrDefault("availability",
+                            new LinkedHashMap<String, LinkedHashMap>())).getOrDefault("bikes", ""));
+                    stationDataItem.put("availability_locks", ((LinkedHashMap) stationDataItem.getOrDefault("availability",
+                            new LinkedHashMap<String, LinkedHashMap>())).getOrDefault("locks", ""));
+                    stationDataItem.put("availability_overflow_capacity", ((LinkedHashMap) stationDataItem.getOrDefault("availability",
+                            new LinkedHashMap<String, LinkedHashMap>())).getOrDefault("overflow_capacity", ""));
                     stationDataItem.remove("availability");
                     stationDataItem.put("updated_at", map.get("updated_at"));
 
@@ -54,22 +58,20 @@ public class OsloCityBike {
             } catch (IOException e) {
                 e.printStackTrace();
             } catch (NullPointerException e) {
-                e.printStackTrace();
+                log.error("********ERROR – ExtractStationAvailabilityDataFromJSON ******** :" + e);
             }
         }
     }
 
     static class ExtractStationMetaDataFromJSON extends DoFn<String, KV<Integer, LinkedHashMap>> {
 
-        private static final Logger log = LoggerFactory.getLogger(OsloCityBike.class);
+        private static final Logger log = LoggerFactory.getLogger(ExtractStationMetaDataFromJSON.class);
 
         @ProcessElement
         public void processElement(@Element String jsonElement, OutputReceiver<KV<Integer, LinkedHashMap>> receiver) {
-
             try {
                 ObjectMapper objectMapper = new ObjectMapper();
                 Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, Object>>() {});
-
                 for (Object o : map.get("stations"))
                     if (o != null) {
                         LinkedHashMap stationMetaDataItem = (LinkedHashMap) o;
@@ -88,6 +90,8 @@ public class OsloCityBike {
                     }
             } catch (IOException e) {
                 e.printStackTrace();
+            } catch (NullPointerException e) {
+                log.error("********ERROR – ExtractStationMetaDataFromJSON ******** :" + e);
             }
         }
     }
@@ -136,12 +140,12 @@ public class OsloCityBike {
             fields.add(new TableFieldSchema().setName("title").setType("STRING"));
             fields.add(new TableFieldSchema().setName("subtitle").setType("STRING"));
             fields.add(new TableFieldSchema().setName("number_of_locks").setType("INTEGER"));
-            fields.add(new TableFieldSchema().setName("station_center_lat").setType("STRING"));
-            fields.add(new TableFieldSchema().setName("station_center_lon").setType("STRING"));
+            fields.add(new TableFieldSchema().setName("station_center_lat").setType("FLOAT"));
+            fields.add(new TableFieldSchema().setName("station_center_lon").setType("FLOAT"));
             fields.add(new TableFieldSchema().setName("availability_bikes").setType("INTEGER"));
             fields.add(new TableFieldSchema().setName("availability_locks").setType("INTEGER"));
             fields.add(new TableFieldSchema().setName("availability_overflow_capacity").setType("BOOL"));
-            fields.add(new TableFieldSchema().setName("updated_at").setType("TIMESTAMP").setMode("REQUIRED"));
+            fields.add(new TableFieldSchema().setName("updated_at").setType("TIMESTAMP"));
             return new TableSchema().setFields(fields);
         }
     }
@@ -370,6 +374,9 @@ public class OsloCityBike {
 
             //joinedCollection.apply(MapElements.via(new FormatAnythingAsTextFn()))
             //        .apply("WriteJoinedData", TextIO.write().to("tmp-JOINED-data.txt"));
+            // RETURNS:
+            // {id=344, in_service=true, title=Marienlystparken, subtitle=langs Kirkeveien, number_of_locks=24, station_center_lat=59.932156, station_center_lon=10.723528, availability_bikes=8, availability_locks=13, availability_overflow_capacity=false, updated_at=2018-08-01T05:04:56+00:00}
+            // ---
 
             finalResultCollection.apply(MapElements.via(new FormatAsTextFn()))
                     .apply("WriteJoinedData", TextIO.write().to(options.getJoinedMetadataAndAvailabilityOutput()));
@@ -400,31 +407,10 @@ mvn -Pdataflow-runner compile exec:java \
       --tempLocation=gs://my_oslo_bike_data/testing/ \
       --output=gs://my_oslo_bike_data/testing/output \
       --outputFormat=bq \
-      --availabilityInputFile=gs://my_oslo_bike_data/*-stations.txt \
-      --stationMetadataInputFile=gs://my_oslo_bike_data/*-availability.txt \
+      --availabilityInputFile=gs://my_oslo_bike_data/2018-08-01-*-availability.txt \
+      --stationMetadataInputFile=gs://my_oslo_bike_data/2018-08-01-*-stations.txt \
       --runner=DataflowRunner \
       --region=europe-west1"
-
-
-mvn -Pdataflow-runner compile exec:java \
-      -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
-      -Dexec.args="--project=rm-cx-211107 \
-      --stagingLocation=gs://my_oslo_bike_data/testing/ \
-      --tempLocation=gs://my_oslo_bike_data/testing/ \
-      --output=gs://my_oslo_bike_data/testing/output \
-      --outputFormat=bq \
-      --availabilityInputFile=src/main/resources/2018-08-data/2018-08-01-*-stations.txt \
-      --stationMetadataInputFile=src/main/resources/2018-08-data/2018-08-01-*-availability.txt \
-      --runner=DataflowRunner \
-      --region=europe-west1"
-
-
-mvn compile exec:java \
-      -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
-      -Pdirect-runner
-      --availabilityInputFile=gs://my_oslo_bike_data/*-stations.txt \
-      --stationMetadataInputFile=gs://my_oslo_bike_data/*-availability.txt \
-
 
 mvn compile exec:java \
       -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
@@ -432,13 +418,6 @@ mvn compile exec:java \
         --availabilityInputFile=src/main/resources/2018-08-data/2018-08-01-*-availability.txt
         --stationMetadataInputFile=src/main/resources/2018-08-data/2018-08-01-*-stations.txt
       " \
-
-      -Pdirect-runner
-
-
-mvn compile exec:java \
-      -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
-      -Dexec.args="--availabilityInputFile=src/main/resources/bikedata-availability-example.txt --output=bikedatalocal" \
       -Pdirect-runner
 
  */
