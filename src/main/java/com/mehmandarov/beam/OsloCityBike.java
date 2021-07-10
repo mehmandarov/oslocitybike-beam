@@ -6,6 +6,7 @@ import com.google.api.services.bigquery.model.TableFieldSchema;
 import com.google.api.services.bigquery.model.TableReference;
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.api.services.bigquery.model.TableSchema;
+import org.apache.beam.runners.core.construction.renderer.PipelineDotRenderer;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.extensions.gcp.options.GcpOptions;
 import org.apache.beam.sdk.io.TextIO;
@@ -38,11 +39,12 @@ public class OsloCityBike {
         public void processElement(@Element String jsonElement, OutputReceiver<KV<Integer, LinkedHashMap>> receiver) {
             try {
                 ObjectMapper objectMapper = new ObjectMapper();
-                Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, Object>>() {});
+                Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, ArrayList>>() {});
 
                 for (Object o : map.get("stations")) {
                     LinkedHashMap stationDataItem = (LinkedHashMap) o;
 
+                    stationDataItem.put("id", stationDataItem.get("id").toString());
                     stationDataItem.put("availability_bikes", ((LinkedHashMap) stationDataItem.getOrDefault("availability",
                             new LinkedHashMap<String, LinkedHashMap>())).getOrDefault("bikes", ""));
                     stationDataItem.put("availability_locks", ((LinkedHashMap) stationDataItem.getOrDefault("availability",
@@ -52,13 +54,13 @@ public class OsloCityBike {
                     stationDataItem.remove("availability");
                     stationDataItem.put("updated_at", map.get("updated_at"));
 
-                    receiver.output(KV.of((Integer)stationDataItem.get("id"), stationDataItem));
+                    receiver.output(KV.of(Integer.parseInt((String)stationDataItem.get("id")), stationDataItem));
                 }
 
             } catch (IOException e) {
                 e.printStackTrace();
             } catch (NullPointerException e) {
-                log.error("********ERROR – ExtractStationAvailabilityDataFromJSON ******** :" + e);
+                log.error("******** ERROR – ExtractStationAvailabilityDataFromJSON ******** :" + e);
             }
         }
     }
@@ -71,11 +73,12 @@ public class OsloCityBike {
         public void processElement(@Element String jsonElement, OutputReceiver<KV<Integer, LinkedHashMap>> receiver) {
             try {
                 ObjectMapper objectMapper = new ObjectMapper();
-                Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, Object>>() {});
+                Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, ArrayList>>() {});
                 for (Object o : map.get("stations"))
                     if (o != null) {
                         LinkedHashMap stationMetaDataItem = (LinkedHashMap) o;
 
+                        stationMetaDataItem.put("id", stationMetaDataItem.get("id").toString());
                         // simplify the metadata object a bit
                         stationMetaDataItem.put("station_center_lat",
                                 ((LinkedHashMap) stationMetaDataItem.getOrDefault("center",
@@ -86,12 +89,12 @@ public class OsloCityBike {
                         stationMetaDataItem.remove("center");
                         stationMetaDataItem.remove("bounds");
 
-                        receiver.output(KV.of((Integer) stationMetaDataItem.get("id"), stationMetaDataItem));
+                        receiver.output(KV.of(Integer.parseInt((String) stationMetaDataItem.get("id")), stationMetaDataItem));
                     }
             } catch (IOException e) {
                 e.printStackTrace();
             } catch (NullPointerException e) {
-                log.error("********ERROR – ExtractStationMetaDataFromJSON ******** :" + e);
+                log.error("******** ERROR – ExtractStationMetaDataFromJSON ******** :" + e);
             }
         }
     }
@@ -168,7 +171,7 @@ public class OsloCityBike {
 
     /**
      * A PTransform that converts a PCollection containing lines of text into a PCollection of
-     * LinkedHashMap with station availability data.
+     * LinkedHashMap with station metadata.
      */
     public static class StationMetadata extends PTransform<PCollection<String>, PCollection<KV<Integer, LinkedHashMap>>> {
         @Override
@@ -382,6 +385,9 @@ public class OsloCityBike {
                     .apply("WriteJoinedData", TextIO.write().to(options.getJoinedMetadataAndAvailabilityOutput()));
         }
 
+        final Logger log = LoggerFactory.getLogger(ExtractStationMetaDataFromJSON.class);
+        String dotString = PipelineDotRenderer.toDotString(pipeline);
+        log.info("GRAPH: " + dotString);
         pipeline.run().waitUntilFinish();
 
     }
@@ -403,22 +409,45 @@ export GOOGLE_APPLICATION_CREDENTIALS="/Users/rm/Documents/development/gcp/beam/
 mvn -Pdataflow-runner compile exec:java \
       -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
       -Dexec.args="--project=rm-cx-211107 \
-      --stagingLocation=gs://my_oslo_bike_data/testing/ \
-      --tempLocation=gs://my_oslo_bike_data/testing/ \
-      --output=gs://my_oslo_bike_data/testing/output \
+      --stagingLocation=gs://my_oslo_bike_data_mod/testing/ \
+      --tempLocation=gs://my_oslo_bike_data_mod/testing/ \
+      --output=gs://my_oslo_bike_data_mod/testing/output \
       --outputFormat=bq \
-      --availabilityInputFile=gs://my_oslo_bike_data/2018-08-01-*-availability.txt \
-      --stationMetadataInputFile=gs://my_oslo_bike_data/2018-08-01-*-stations.txt \
+      --availabilityInputFile=gs://my_oslo_bike_data_mod/2019-10-*-availability.txt \
+      --stationMetadataInputFile=gs://my_oslo_bike_data_mod/2019-10-*-stations.txt \
       --runner=DataflowRunner \
       --region=europe-west1"
 
 mvn compile exec:java \
       -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
       -Dexec.args=" \
-        --availabilityInputFile=src/main/resources/2018-08-data/2018-08-01-*-availability.txt
-        --stationMetadataInputFile=src/main/resources/2018-08-data/2018-08-01-*-stations.txt
+        --availabilityInputFile=src/main/resources/2019-05-16-data/2019-05-16-*-availability-out.txt \
+        --stationMetadataInputFile=src/main/resources/2019-05-16-data/2019-05-16-*-stations-out.txt \
       " \
       -Pdirect-runner
+
+mvn compile exec:java \
+      -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
+      -Dexec.args=" \
+        --availabilityInputFile=src/main/resources/2018-08-data/2018-08-*-availability.txt \
+        --stationMetadataInputFile=src/main/resources/2018-08-data/2018-08-*-stations.txt \
+      " \
+      -Pdirect-runner
+
+-----------
+
+for f in 2019-06*-stations.txt
+do
+  tr -d "\n\r " < "$f" > $(basename "$f" .txt)-out.txt
+done
+
+for f in 2019-06*-availability.txt
+do
+  tr -d "\n\r " < "$f" > $(basename "$f" .txt)-out.txt
+done
+-----------
+cat pretty-printed.json | jq -c .
+-----------
 
  */
 
