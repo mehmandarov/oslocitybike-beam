@@ -1,6 +1,7 @@
 package com.mehmandarov.beam;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.api.services.bigquery.model.TableFieldSchema;
 import com.google.api.services.bigquery.model.TableReference;
@@ -39,6 +40,8 @@ public class OsloCityBike {
         public void processElement(@Element String jsonElement, OutputReceiver<KV<Integer, LinkedHashMap>> receiver) {
             try {
                 ObjectMapper objectMapper = new ObjectMapper();
+                objectMapper.enable(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY);
+
                 Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, ArrayList>>() {});
 
                 for (Object o : map.get("stations")) {
@@ -73,6 +76,8 @@ public class OsloCityBike {
         public void processElement(@Element String jsonElement, OutputReceiver<KV<Integer, LinkedHashMap>> receiver) {
             try {
                 ObjectMapper objectMapper = new ObjectMapper();
+                objectMapper.enable(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY);
+
                 Map<String, ArrayList> map = objectMapper.readValue(jsonElement, new TypeReference<Map<String, ArrayList>>() {});
                 for (Object o : map.get("stations"))
                     if (o != null) {
@@ -385,9 +390,11 @@ public class OsloCityBike {
                     .apply("WriteJoinedData", TextIO.write().to(options.getJoinedMetadataAndAvailabilityOutput()));
         }
 
+        /*
         final Logger log = LoggerFactory.getLogger(ExtractStationMetaDataFromJSON.class);
         String dotString = PipelineDotRenderer.toDotString(pipeline);
         log.info("GRAPH: " + dotString);
+         */
         pipeline.run().waitUntilFinish();
 
     }

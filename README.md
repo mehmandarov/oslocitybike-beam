@@ -12,7 +12,7 @@ Beam project using public Oslo City Bike data
 ```bash
 mvn compile exec:java \
       -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
-      -Dexec.args="--availabilityInputFile=src/main/resources/bikedata-availability-example.txt --output=bikedatalocal" \
+      -Dexec.args="--availabilityInputFile=src/main/resources/bikedata-availability-example.txt --stationMetadataInputFile=src/main/resources/bikedata-stations-example.txt --output=bikedatalocal" \
       -Pdirect-runner
 ```
 
