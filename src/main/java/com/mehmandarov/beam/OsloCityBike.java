@@ -55,7 +55,7 @@ public class OsloCityBike {
                     stationDataItem.put("availability_overflow_capacity", ((LinkedHashMap) stationDataItem.getOrDefault("availability",
                             new LinkedHashMap<String, LinkedHashMap>())).getOrDefault("overflow_capacity", ""));
                     stationDataItem.remove("availability");
-                    stationDataItem.put("updated_at", map.get("updated_at"));
+                    stationDataItem.put("updated_at", map.get("updated_at").get(0));
 
                     receiver.output(KV.of(Integer.parseInt((String)stationDataItem.get("id")), stationDataItem));
                 }
@@ -412,26 +412,18 @@ public class OsloCityBike {
 export JAVA_HOME=`/usr/libexec/java_home -v 1.8`
 export GOOGLE_APPLICATION_CREDENTIALS="/Users/rm/Documents/development/gcp/beam/oslocitybike-beam/sykkeldata-creds.json"
 
-
 mvn -Pdataflow-runner compile exec:java \
       -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
       -Dexec.args="--project=rm-cx-211107 \
-      --stagingLocation=gs://my_oslo_bike_data_mod/testing/ \
-      --tempLocation=gs://my_oslo_bike_data_mod/testing/ \
-      --output=gs://my_oslo_bike_data_mod/testing/output \
+      --gcpTempLocation=gs://my_oslo_bike_data_mod/tmp/ \
+      --tempLocation=gs://my_oslo_bike_data_mod/tmp/ \
+      --output=gs://my_oslo_bike_data_mod/tmp/output \
       --outputFormat=bq \
-      --availabilityInputFile=gs://my_oslo_bike_data_mod/2019-10-*-availability.txt \
-      --stationMetadataInputFile=gs://my_oslo_bike_data_mod/2019-10-*-stations.txt \
+      --availabilityInputFile=gs://my_oslo_bike_data_mod/2020-*-availability-out.txt \
+      --stationMetadataInputFile=gs://my_oslo_bike_data_mod/2020-*-stations-out.txt \
       --runner=DataflowRunner \
       --region=europe-west1"
 
-mvn compile exec:java \
-      -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
-      -Dexec.args=" \
-        --availabilityInputFile=src/main/resources/2019-05-16-data/2019-05-16-*-availability-out.txt \
-        --stationMetadataInputFile=src/main/resources/2019-05-16-data/2019-05-16-*-stations-out.txt \
-      " \
-      -Pdirect-runner
 
 mvn compile exec:java \
       -Dexec.mainClass=com.mehmandarov.beam.OsloCityBike \
@@ -443,18 +435,8 @@ mvn compile exec:java \
 
 -----------
 
-for f in 2019-06*-stations.txt
-do
-  tr -d "\n\r " < "$f" > $(basename "$f" .txt)-out.txt
-done
-
-for f in 2019-06*-availability.txt
-do
-  tr -d "\n\r " < "$f" > $(basename "$f" .txt)-out.txt
-done
------------
-cat pretty-printed.json | jq -c .
------------
+for f in 2020-0{1..3}-*-stations.txt; do  jq '.' -c "$f" > $(basename "$f" .txt)-out.txt; done
+for f in 2020-0{1..3}-*-availability.txt;  do  jq '.' -c "$f" > $(basename "$f" .txt)-out.txt; done
 
  */
 
